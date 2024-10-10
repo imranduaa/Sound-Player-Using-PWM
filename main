@@ -1,0 +1,137 @@
+/*
+ * Starter code for ECE 266 Lab 7, Sound Player (PWM), spring 2024
+ *
+ * The program sets LED for the intended music note, but does not yet play sound on the buzzer.
+ *
+ * main.c
+ *
+ * Created by Zhao Zhang
+ * Last update: 10/13/2022
+ */
+
+// REVISE AS NEEDED
+#include <stdint.h>
+#include <stdbool.h>
+#include <math.h>
+#include <inc/hw_memmap.h>
+#include <inc/hw_ints.h>
+#include <driverlib/pin_map.h>
+#include <driverlib/sysctl.h>
+#include <driverlib/gpio.h>
+#include <driverlib/interrupt.h>
+#include <pwm_led.h>
+#include "launchpad.h"
+#include "music.h"
+
+/*
+ * Global data structures and variables
+ */
+#define CPU_CLOCK_RATE      50000000
+#define NUM_PITCH           7
+#define NUM_VOLUME_LEVEL    3
+
+// Events in the system
+Event check_push_button_event;
+Event play_sound_event;
+
+// System state
+typedef struct
+{
+    int pitch;            // Current pitch level
+    int volume;           // Current sound level
+    bool buzzer_on;             // If buzzer is turned on or off
+} SysState;
+
+SysState sys = { 0, 0, false };
+
+// Frequency values for notes
+static int buzzerNoises[NUM_PITCH] = {261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 493.88};
+
+//Settings for Volume: Low, Medium, and High. These are based on the desire duty cycles/pulse Widths
+static int buzzerVolumes[NUM_VOLUME_LEVEL] = {1000, 2500, 20000};
+
+static SysState sys_state = { 0, 0, false };
+/*
+ * Task 1: Check the push buttons.
+ *
+ * Use interrupt-based push button input.
+ */
+void CheckPushButton(Event *event)
+{
+    // Process the pushbutton input
+    switch (PushButtonRead())
+    {
+    case 1:
+        sys.pitch = (sys.pitch + 1) % NUM_PITCH;
+        break;
+
+    case 2:
+        sys.volume = (sys.volume + 1) % NUM_VOLUME_LEVEL;
+        break;
+    }
+}
+
+
+/*
+ * Task 2: Play the buzzer.
+ *
+ * REVISE THE CODE
+ */
+void PlaySound(Event *event)
+{
+    int delay;
+
+    if (!sys.buzzer_on) {
+        // Turn on the buzzer with the current PWM setting
+        MusicSetLed(sys.pitch, sys.volume);
+        PwmBuzzerset(CPU_CLOCK_RATE/buzzerNoises[sys.pitch], buzzerVolumes[sys.volume]);
+        sys.buzzer_on = true;
+        delay = 500;
+    }
+    else
+    {
+        // Turn off the buzzer
+        MusicTurnOffLed();
+        PwmBuzzerset(CPU_CLOCK_RATE/buzzerNoises[sys_state.pitch], 0);
+        sys.buzzer_on = false;
+        delay = 1000;
+    }
+
+    // Increment the position and schedule the next callback
+    EventSchedule(&play_sound_event, event->time + delay);
+}
+
+
+/*
+ * The main function
+ *
+ * REVISE THE CODE
+ */
+void main(void)
+{
+    // Initialize the LaunchPad, PWM function for LED, and PMW function for buzzer
+    LaunchPadInit();
+    MusicInitLed();
+    PwmBuzzerInit();
+    PwmLedInit();
+
+    // Initialize the events
+    EventInit(&play_sound_event, PlaySound);
+    EventInit(&check_push_button_event, CheckPushButton);
+
+    // Register ISR event
+    PushButtonEventRegister(&check_push_button_event);
+
+    // Schedule time events
+    EventSchedule(&play_sound_event, 100);
+
+    // Loop forever
+    while (true)
+    {
+        // Wait for interrupt
+        asm("   wfi");
+
+        // Execute scheduled callbacks
+        EventExecute();
+    }
+}
